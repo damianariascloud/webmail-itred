@@ -6,10 +6,12 @@ export async function POST(request: Request) {
     const apiKey = process.env.SENDGRID_API_KEY
 
     if (!apiKey) {
-      return NextResponse.json({ error: 'Falta la API Key de SendGrid en el servidor' }, { status: 500 })
+      return NextResponse.json(
+        { error: 'Falta la API Key de SendGrid en el servidor' },
+        { status: 500 }
+      )
     }
 
-    // Petición oficial a la API de SendGrid
     const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: {
@@ -26,11 +28,15 @@ export async function POST(request: Request) {
 
     if (!response.ok) {
       const errorBody = await response.text()
-      return NextResponse.json({ error: `Error de SendGrid: ${errorBody}` }, { status: 500 })
+      return NextResponse.json(
+        { error: `Error de SendGrid: ${errorBody}` },
+        { status: 500 }
+      )
     }
 
     return NextResponse.json({ success: true, message: 'Correo enviado con éxito' })
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
 }
