@@ -237,4 +237,28 @@ export default function WebmailHome() {
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1">Contraseña</label>
             <input
-              type
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium py-2.5 rounded-lg text-sm transition-colors shadow-lg shadow-indigo-600/20 mt-2"
+          >
+            {loading ? 'Verificando...' : 'Acceder al Buzón'}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center text-xs text-slate-500">
+          Infraestructura impulsada por Next.js, Supabase y SendGrid
+        </div>
+      </div>
+    </main>
+  )
+}
