@@ -20,7 +20,10 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         personalizations: [{ to: [{ email: to }] }],
-        from: { email: 'no-reply@itredspaprueba.cl', name: 'Webmail @itredspaprueba.cl' },
+        from: { 
+          email: 'damianariascloud@gmail.com', 
+          name: 'Webmail @itredspaprueba.cl' 
+        },
         subject: subject,
         content: [{ type: 'text/plain', value: message }],
       }),
