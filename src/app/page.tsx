@@ -1,12 +1,13 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
 export default function WebmailHome() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [checkingAuth, setCheckingAuth] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
   const [user, setUser] = useState<any>(null)
 
@@ -18,6 +19,29 @@ export default function WebmailHome() {
   const [sending, setSending] = useState(false)
   const [sendStatus, setSendStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // 1. Control de Persistencia y Verificación de Sesión
+  useEffect(() => {
+    // Comprobar la sesión actual al cargar el componente
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      setUser(session?.user ?? null)
+      setCheckingAuth(false)
+    }
+
+    checkUser()
+
+    // Escuchar cambios en el estado de autenticación (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      setCheckingAuth(false)
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  // 2. Manejo de Inicio de Sesión
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -36,6 +60,13 @@ export default function WebmailHome() {
     setLoading(false)
   }
 
+  // 3. Manejo de Cierre de Sesión
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    setUser(null)
+  }
+
+  // 4. Envío de Correo vía API Route
   const handleSendEmail = async (e: React.FormEvent) => {
     e.preventDefault()
     setSending(true)
@@ -59,13 +90,26 @@ export default function WebmailHome() {
       } else {
         setSendStatus({ type: 'error', text: data.error || 'Error al enviar el correo' })
       }
-    } catch (err: any) {
+    } catch {
       setSendStatus({ type: 'error', text: 'Error de conexión al enviar el correo' })
     } finally {
       setSending(false)
     }
   }
 
+  // Vista de Carga mientras verifica token guardado
+  if (checkingAuth) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-xs text-slate-400">Verificando sesión...</p>
+        </div>
+      </main>
+    )
+  }
+
+  // Vista cuando el usuario está Autenticado
   if (user) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
@@ -80,7 +124,7 @@ export default function WebmailHome() {
           <div className="flex items-center gap-4">
             <span className="text-xs text-slate-400">{user.email}</span>
             <button
-              onClick={() => supabase.auth.signOut().then(() => setUser(null))}
+              onClick={handleLogout}
               className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors"
             >
               Cerrar Sesión
@@ -204,6 +248,7 @@ export default function WebmailHome() {
     )
   }
 
+  // Formulario de Login (Si no hay usuario)
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
