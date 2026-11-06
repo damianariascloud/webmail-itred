@@ -3,6 +3,16 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
+interface EmailItem {
+  id: string
+  sender: string
+  recipient: string
+  subject: string
+  message: string
+  folder: string
+  created_at: string
+}
+
 export default function WebmailHome() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -10,6 +20,12 @@ export default function WebmailHome() {
   const [checkingAuth, setCheckingAuth] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
   const [user, setUser] = useState<any>(null)
+
+  // Navegación de carpetas e historial
+  const [currentFolder, setCurrentFolder] = useState<'inbox' | 'sent'>('inbox')
+  const [emailsList, setEmailsList] = useState<EmailItem[]>([])
+  const [loadingEmails, setLoadingEmails] = useState(false)
+  const [selectedEmail, setSelectedEmail] = useState<EmailItem | null>(null)
 
   // Estado para redacción de correo
   const [isComposing, setIsComposing] = useState(false)
@@ -19,9 +35,8 @@ export default function WebmailHome() {
   const [sending, setSending] = useState(false)
   const [sendStatus, setSendStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // 1. Control de Persistencia y Verificación de Sesión
+  // Control de Sesión
   useEffect(() => {
-    // Comprobar la sesión actual al cargar el componente
     const checkUser = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       setUser(session?.user ?? null)
@@ -30,7 +45,6 @@ export default function WebmailHome() {
 
     checkUser()
 
-    // Escuchar cambios en el estado de autenticación (login, logout, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
       setCheckingAuth(false)
@@ -41,16 +55,40 @@ export default function WebmailHome() {
     }
   }, [])
 
-  // 2. Manejo de Inicio de Sesión
+  // Cargar correos según carpeta seleccionada
+  const fetchEmails = async () => {
+    if (!user) return
+    setLoadingEmails(true)
+
+    let query = supabase.from('emails').select('*').order('created_at', { ascending: false })
+
+    if (currentFolder === 'sent') {
+      query = query.eq('user_id', user.id).eq('folder', 'sent')
+    } else {
+      query = query.or(`recipient.eq.${user.email},and(folder.eq.inbox,user_id.eq.${user.id})`)
+    }
+
+    const { data, error } = await query
+
+    if (!error && data) {
+      setEmailsList(data as EmailItem[])
+    }
+    setLoadingEmails(false)
+  }
+
+  useEffect(() => {
+    if (user) {
+      fetchEmails()
+    }
+  }, [user, currentFolder])
+
+  // Login & Logout
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setErrorMsg('')
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
       setErrorMsg(error.message)
@@ -60,19 +98,19 @@ export default function WebmailHome() {
     setLoading(false)
   }
 
-  // 3. Manejo de Cierre de Sesión
   const handleLogout = async () => {
     await supabase.auth.signOut()
     setUser(null)
   }
 
-  // 4. Envío de Correo vía API Route
+  // Envío y Guardado de Correo
   const handleSendEmail = async (e: React.FormEvent) => {
     e.preventDefault()
     setSending(true)
     setSendStatus(null)
 
     try {
+      // 1. Enviar vía SendGrid API
       const res = await fetch('/api/send-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -82,11 +120,27 @@ export default function WebmailHome() {
       const data = await res.json()
 
       if (res.ok && data.success) {
-        setSendStatus({ type: 'success', text: '¡Correo enviado con éxito!' })
+        // 2. Guardar en base de datos Supabase
+        await supabase.from('emails').insert({
+          user_id: user.id,
+          sender: user.email,
+          recipient: to,
+          subject,
+          message,
+          folder: 'sent',
+        })
+
+        setSendStatus({ type: 'success', text: '¡Correo enviado y registrado con éxito!' })
         setTo('')
         setSubject('')
         setMessage('')
-        setTimeout(() => setIsComposing(false), 2000)
+        
+        // Refrescar lista si estamos en enviados
+        if (currentFolder === 'sent') {
+          fetchEmails()
+        }
+
+        setTimeout(() => setIsComposing(false), 1500)
       } else {
         setSendStatus({ type: 'error', text: data.error || 'Error al enviar el correo' })
       }
@@ -97,7 +151,6 @@ export default function WebmailHome() {
     }
   }
 
-  // Vista de Carga mientras verifica token guardado
   if (checkingAuth) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
@@ -109,7 +162,6 @@ export default function WebmailHome() {
     )
   }
 
-  // Vista cuando el usuario está Autenticado
   if (user) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
@@ -134,7 +186,7 @@ export default function WebmailHome() {
 
         {/* Layout principal */}
         <div className="flex-1 flex p-6 gap-6 max-w-6xl w-full mx-auto">
-          {/* Barra lateral */}
+          {/* Sidebar */}
           <aside className="w-64 space-y-4">
             <button
               onClick={() => setIsComposing(true)}
@@ -144,20 +196,91 @@ export default function WebmailHome() {
             </button>
 
             <nav className="space-y-1 text-sm font-medium">
-              <div className="bg-slate-900 text-indigo-400 px-4 py-2.5 rounded-xl border border-slate-800 flex justify-between items-center">
+              <button
+                onClick={() => { setCurrentFolder('inbox'); setSelectedEmail(null); }}
+                className={`w-full text-left px-4 py-2.5 rounded-xl border flex justify-between items-center transition-colors ${
+                  currentFolder === 'inbox'
+                    ? 'bg-slate-900 text-indigo-400 border-slate-800'
+                    : 'text-slate-400 border-transparent hover:bg-slate-900'
+                }`}
+              >
                 <span>📥 Bandeja de Entrada</span>
-                <span className="text-xs bg-indigo-950 border border-indigo-800 px-2 py-0.5 rounded-full text-indigo-300">0</span>
-              </div>
-              <div className="text-slate-400 hover:bg-slate-900 px-4 py-2.5 rounded-xl transition-colors cursor-pointer">
-                📤 Enviados
-              </div>
+              </button>
+
+              <button
+                onClick={() => { setCurrentFolder('sent'); setSelectedEmail(null); }}
+                className={`w-full text-left px-4 py-2.5 rounded-xl border flex justify-between items-center transition-colors ${
+                  currentFolder === 'sent'
+                    ? 'bg-slate-900 text-indigo-400 border-slate-800'
+                    : 'text-slate-400 border-transparent hover:bg-slate-900'
+                }`}
+              >
+                <span>📤 Enviados</span>
+              </button>
             </nav>
           </aside>
 
-          {/* Vista principal de correo */}
-          <section className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl p-8 flex flex-col items-center justify-center text-center">
-            <p className="text-slate-400 text-sm">No hay mensajes recientes en tu bandeja de entrada.</p>
-            <p className="text-xs text-slate-600 mt-2">Prueba enviando tu primer correo usando el botón "Redactar Correo".</p>
+          {/* Panel de Correos */}
+          <section className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4 capitalize">
+              {currentFolder === 'inbox' ? 'Bandeja de Entrada' : 'Correos Enviados'}
+            </h2>
+
+            {loadingEmails ? (
+              <div className="flex-1 flex items-center justify-center text-xs text-slate-500">
+                Cargando mensajes...
+              </div>
+            ) : selectedEmail ? (
+              /* Vista Detalle del Correo */
+              <div className="space-y-4 flex-1 flex flex-col">
+                <button
+                  onClick={() => setSelectedEmail(null)}
+                  className="text-xs text-indigo-400 hover:underline flex items-center gap-1 self-start"
+                >
+                  ← Volver a la lista
+                </button>
+                <div className="border-b border-slate-800 pb-4">
+                  <h3 className="text-lg font-bold text-white">{selectedEmail.subject}</h3>
+                  <div className="text-xs text-slate-400 mt-1 flex justify-between">
+                    <span>De: {selectedEmail.sender} | Para: {selectedEmail.recipient}</span>
+                    <span>{new Date(selectedEmail.created_at).toLocaleString()}</span>
+                  </div>
+                </div>
+                <div className="text-sm text-slate-300 whitespace-pre-wrap flex-1">
+                  {selectedEmail.message}
+                </div>
+              </div>
+            ) : emailsList.length === 0 ? (
+              /* Estado Vacío */
+              <div className="flex-1 flex flex-col items-center justify-center text-center">
+                <p className="text-slate-400 text-sm">No hay mensajes en {currentFolder === 'inbox' ? 'tu bandeja de entrada' : 'enviados'}.</p>
+                <p className="text-xs text-slate-600 mt-1">
+                  {currentFolder === 'sent' ? 'Los correos que envíes aparecerán listados aquí.' : 'Los correos entrantes aparecerán aquí.'}
+                </p>
+              </div>
+            ) : (
+              /* Lista de Correos */
+              <div className="space-y-2 overflow-y-auto">
+                {emailsList.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => setSelectedEmail(item)}
+                    className="p-3.5 bg-slate-950/60 hover:bg-slate-950 border border-slate-800/80 rounded-xl cursor-pointer transition-colors flex justify-between items-center"
+                  >
+                    <div className="space-y-1">
+                      <div className="text-xs font-semibold text-indigo-300">
+                        {currentFolder === 'sent' ? `Para: ${item.recipient}` : `De: ${item.sender}`}
+                      </div>
+                      <div className="text-sm text-slate-200 font-medium">{item.subject}</div>
+                      <div className="text-xs text-slate-500 line-clamp-1">{item.message}</div>
+                    </div>
+                    <span className="text-[10px] text-slate-500 whitespace-nowrap ml-4">
+                      {new Date(item.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         </div>
 
@@ -167,22 +290,13 @@ export default function WebmailHome() {
             <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative">
               <div className="flex justify-between items-center border-b border-slate-800 pb-4 mb-4">
                 <h3 className="font-semibold text-white text-base">Nuevo Mensaje</h3>
-                <button
-                  onClick={() => setIsComposing(false)}
-                  className="text-slate-400 hover:text-white text-sm"
-                >
-                  ✕
-                </button>
+                <button onClick={() => setIsComposing(false)} className="text-slate-400 hover:text-white text-sm">✕</button>
               </div>
 
               {sendStatus && (
-                <div
-                  className={`mb-4 p-3 rounded-lg text-xs border ${
-                    sendStatus.type === 'success'
-                      ? 'bg-emerald-950/50 border-emerald-800 text-emerald-300'
-                      : 'bg-red-950/50 border-red-800 text-red-300'
-                  }`}
-                >
+                <div className={`mb-4 p-3 rounded-lg text-xs border ${
+                  sendStatus.type === 'success' ? 'bg-emerald-950/50 border-emerald-800 text-emerald-300' : 'bg-red-950/50 border-red-800 text-red-300'
+                }`}>
                   {sendStatus.text}
                 </div>
               )}
@@ -225,18 +339,10 @@ export default function WebmailHome() {
                 </div>
 
                 <div className="flex justify-end gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsComposing(false)}
-                    className="px-4 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 transition-colors"
-                  >
+                  <button type="button" onClick={() => setIsComposing(false)} className="px-4 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 transition-colors">
                     Cancelar
                   </button>
-                  <button
-                    type="submit"
-                    disabled={sending}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-lg text-xs transition-colors shadow-lg shadow-indigo-600/20"
-                  >
+                  <button type="submit" disabled={sending} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-lg text-xs transition-colors shadow-lg shadow-indigo-600/20">
                     {sending ? 'Enviando...' : 'Enviar Correo'}
                   </button>
                 </div>
@@ -248,7 +354,7 @@ export default function WebmailHome() {
     )
   }
 
-  // Formulario de Login (Si no hay usuario)
+  // Formulario de Login
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
@@ -299,10 +405,6 @@ export default function WebmailHome() {
             {loading ? 'Verificando...' : 'Acceder al Buzón'}
           </button>
         </form>
-
-        <div className="mt-6 text-center text-xs text-slate-500">
-          Infraestructura impulsada por Next.js, Supabase y SendGrid
-        </div>
       </div>
     </main>
   )
